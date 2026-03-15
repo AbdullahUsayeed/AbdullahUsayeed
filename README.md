@@ -1,11 +1,18 @@
-Hello! I'm an embedded systems developer focused on Edge AI and Industrial IoT systems. I build hardware-software integrated solutions, covering everything from PCB design and firmware development to cloud connectivity and machine learning at the edge. My work combines embedded systems, distributed sensor networks, and intelligent automation.
+## Introduction
 
-What tools do I use?
+Hello! I'm an **Embedded Systems Developer** focused on **Edge AI and Industrial IoT**.
 
-**Tech Stack**
+I design and build **hardware–software integrated systems**, working across the full development stack: **PCB design, firmware development, embedded networking, and edge machine learning**. My work centers around **distributed sensor systems, intelligent automation, and industrial monitoring solutions**.
 
-**PCB Design:** Altium Designer, KiCad
-**CAD / Mechanical:** FreeCAD
+---
+
+## Tech Stack
+
+**PCB Design:**
+Altium Designer, KiCad
+
+**CAD / Mechanical:**
+FreeCAD
 
 **Programming:**
 C, C++, Python (Data Science & Backend), Rust *(learning)*, Java, HTML, CSS
@@ -13,46 +20,74 @@ C, C++, Python (Data Science & Backend), Rust *(learning)*, Java, HTML, CSS
 **Embedded & Development Tools:**
 FreeRTOS, STM32CubeIDE, PlatformIO, Docker, Arduino IDE
 
-**Edge AI / ML:**
+**Edge AI / Machine Learning:**
 TensorFlow Lite for Microcontrollers, Edge Impulse
 
+---
 
-😄Lab Instruments(Yes My own lab):
-Analogue Discovery 2 For oscilliscope, wave form generator and most importantly logic analyzer. 
-Multimeter for measuring everything. 
-LPFK pcb prototyper for prototyping PCB upto 4 layer boards
-Bambu Lab 3d printer for enclosure printing. 
+## Personal Lab & Prototyping
 
-Current Ongoing Projects:
-[Industrial HVAC Intelligence]: Developing a decentralized LoRaWAN mesh network using STM32 which would calculate superheat and subcooling and send it to a server. 
+I maintain a **personal electronics lab** for rapid prototyping, testing, and experimentation.
 
-Previous Projects:
-Made the No-Internet game on STM32 Bluepill
-Made a parking sensor using IR modules on STM32 Bluepill. 
-Made a Class AB amplifier.
-Made a power inverter from solar panel to Grid.
-Made a Website for myself.
-Several lab projects with stm32 presented on my portfolio. 
-Used LLM to integrate with python to Configure CubeMX
-Used ROS2 and Gazebo with ESP32 cam for AI object detection. 
+**Instrumentation**
 
-🔭Future Goals:
-My goal is to contribute to industrial automation, embedded systems, and Edge AI development in the technology sector of Germany.
-I aim to work on advanced embedded systems and intelligent industrial infrastructure.
+* Analog Discovery 2 (oscilloscope, waveform generator, logic analyzer)
+* Multimeter for electrical measurement and debugging
 
+**Prototyping Tools**
 
+* LPKF PCB prototyper (rapid PCB fabrication up to 4-layer boards)
+* Bambu Lab 3D printer for enclosure and mechanical prototyping
 
-<!--
-**AbdullahUsayeed/AbdullahUsayeed** is a ✨ _special_ ✨ repository because its `README.md` (this file) appears on your GitHub profile.
+---
 
-Here are some ideas to get you started:
+## Current Project
 
-- 🔭 I’m currently working on ...
-- 🌱 I’m currently learning ...
-- 👯 I’m looking to collaborate on ...
-- 🤔 I’m looking for help with ...
-- 💬 Ask me about ...
-- 📫 How to reach me: ...
-- 😄 Pronouns: ...
-- ⚡ Fun fact: ...
--->
+**Industrial HVAC Intelligence**
+
+Developing a **decentralized LoRaWAN sensor network using STM32** for HVAC system monitoring.
+
+Key functionality:
+
+* Distributed sensor nodes
+* Real-time calculation of **superheat and subcooling**
+* Wireless telemetry via LoRaWAN
+* Data transmission to a backend server for monitoring and analytics
+
+Goal: enable **predictive maintenance and intelligent HVAC diagnostics**.
+
+---
+
+## Selected Projects
+
+**STM32 No-Internet Game**
+Standalone embedded game built on the STM32 Bluepill.
+
+**IR-Based Parking Sensor**
+Distance sensing system using IR modules and STM32 Bluepill.
+
+**Class-AB Audio Amplifier**
+Analog amplifier design and testing.
+
+**Solar Power Inverter**
+Designed a power inverter converting **solar DC to grid-compatible AC**.
+
+**Personal Portfolio Website**
+Developed a personal website using HTML and CSS.
+
+**STM32CubeMX Automation**
+Integrated an LLM with Python to automate configuration workflows in STM32CubeMX.
+
+**ESP32-CAM AI Object Detection**
+Used ESP32-CAM with ROS2 and Gazebo for object detection experiments.
+
+**Embedded Lab Experiments**
+Various STM32-based experiments and embedded system prototypes documented in my portfolio.
+
+---
+
+## Future Goals
+
+My goal is to contribute to **industrial automation, embedded systems, and Edge AI technologies** in the technology sector of Germany.
+
+I am particularly interested in working on **advanced embedded platforms, intelligent sensor networks, and industrial infrastructure systems**.
