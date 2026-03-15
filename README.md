@@ -2,11 +2,20 @@ Hello! I'm an embedded systems developer focused on Edge AI and Industrial IoT s
 
 What tools do I use?
 
-PCB: Altium Designer, Kicad
-CAD: software: FreeCad
-Languages: C, C++, Python (Data Science & Backends), Rust (Learning), java, css, html
-Software/OS: FreeRTOS, STM32CubeIDE, PlatformIO, Docker, ArduinoIDE
-AI/ML: TensorFlow Lite for Microcontrollers, Edge Impulse.
+**Tech Stack**
+
+**PCB Design:** Altium Designer, KiCad
+**CAD / Mechanical:** FreeCAD
+
+**Programming:**
+C, C++, Python (Data Science & Backend), Rust *(learning)*, Java, HTML, CSS
+
+**Embedded & Development Tools:**
+FreeRTOS, STM32CubeIDE, PlatformIO, Docker, Arduino IDE
+
+**Edge AI / ML:**
+TensorFlow Lite for Microcontrollers, Edge Impulse
+
 
 😄Lab Instruments(Yes My own lab):
 Analogue Discovery 2 For oscilliscope, wave form generator and most importantly logic analyzer. 
