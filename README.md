@@ -1,4 +1,3 @@
-Introduction
 Hello! I'm an embedded systems developer focused on Edge AI and Industrial IoT systems. I build hardware-software integrated solutions, covering everything from PCB design and firmware development to cloud connectivity and machine learning at the edge. My work combines embedded systems, distributed sensor networks, and intelligent automation.
 
 What tools do I use?
