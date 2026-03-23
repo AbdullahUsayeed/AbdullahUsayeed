@@ -27,7 +27,9 @@ Design principles
 -----------------
 • XML is built via lxml Element API only—no f-strings or string concatenation
   in the XML-generation path.
-• Every block / port / link receives a deterministic UUID4.
+• Every port receives a **deterministic, content-addressed UID** derived from
+  sha256(block_id + port_type + port_index).  The same IR always produces
+  the same XML, enabling the semantic simulation-result cache.
 • Port indices are 1-based throughout, matching Xcos conventions.
 • The compiler raises ``GraphValidationError`` with *user-friendly* messages;
   the FastAPI layer translates these into the UI error strings.
@@ -36,7 +38,8 @@ Design principles
 from __future__ import annotations
 
 import gzip
-import uuid
+import hashlib
+import logging
 from collections import deque
 from typing import Dict, List, Set, Tuple
 
