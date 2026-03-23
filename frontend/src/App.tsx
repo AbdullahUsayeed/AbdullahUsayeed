@@ -156,6 +156,7 @@ export default function App() {
         <SimulationGraph
           result={store.result}
           ghostResult={store.ghostResult}
+          isLoading={isLoading}
         />
       </div>
     </div>

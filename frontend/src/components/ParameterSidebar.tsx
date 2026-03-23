@@ -2,9 +2,11 @@
 // Project Flux — ParameterSidebar
 // "Smart Sliders" for real-time parameter tuning.
 // Sliders are generated dynamically from the Block Registry.
+// Changes are debounced (150 ms) so the backend only receives one request
+// per gesture rather than one per animation frame.
 // ---------------------------------------------------------------------------
 
-import { useCallback } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import type { BlockDefinition, BlockRegistry, SimulationModel } from "../types";
 
 interface Props {
@@ -65,9 +67,22 @@ export function ParameterSidebar({ model, registry, onUpdate }: Props) {
     return spec && spec.params.some((p) => p.tunable);
   });
 
+  // Debounce timer: fire onUpdate 150 ms after the user stops dragging.
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Clean up any pending timer when the component unmounts.
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, []);
+
   const handleChange = useCallback(
     (blockId: string, paramName: string, value: number) => {
-      onUpdate(blockId, paramName, value);
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        onUpdate(blockId, paramName, value);
+      }, 150);
     },
     [onUpdate]
   );

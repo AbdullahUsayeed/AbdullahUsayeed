@@ -83,7 +83,7 @@ services:
       - worker
       - --loglevel=info
       - --concurrency=1        # one Scilab process per OS process
-      - --queues=celery
+      - --queues=flux_high,flux_low  # flux_high polled first → acts as priority
     environment:
       <<: *backend-env
     depends_on:

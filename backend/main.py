@@ -24,6 +24,7 @@ Design notes
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -122,12 +123,37 @@ class JobResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Helper: semantic IR hash
+# ---------------------------------------------------------------------------
+
+
+def _ir_hash(model: SimulationModel) -> str:
+    """
+    Return a stable SHA-256 hash of the simulation-relevant IR fields.
+
+    Excludes volatile fields that do not affect physics:
+      • ``model.id``       — top-level UUID changes on every AI generation
+      • ``model.metadata`` — AI commentary (intent, explanation, raw_prompt …)
+      • ``block.ports``    — populated by the compiler, never set by the AI
+
+    The result is used as the primary Redis cache key so that two requests
+    for semantically identical models (e.g. slider tweaks that happen to
+    land on the same value) share a cached result.
+    """
+    canonical = model.model_dump(
+        exclude={"id": True, "metadata": True, "blocks": {"__all__": {"ports": True}}}
+    )
+    payload = json.dumps(canonical, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+# ---------------------------------------------------------------------------
 # Helper: enqueue a simulation
 # ---------------------------------------------------------------------------
 
 
-def _enqueue(model: SimulationModel) -> str:
-    """Compile model → ZCOS, enqueue Celery task, return job_id."""
+def _enqueue(model: SimulationModel, queue: str = "flux_high") -> str:
+    """Compile model → ZCOS, enqueue Celery task on *queue*, return job_id."""
     try:
         zcos_bytes = compile_to_zcos(model)
     except GraphValidationError as exc:
@@ -139,11 +165,14 @@ def _enqueue(model: SimulationModel) -> str:
             detail="Internal compilation error. Please try again.",
         ) from exc
 
+    ir_hash = _ir_hash(model)
     job_id = str(uuid.uuid4())
     run_simulation.apply_async(
-        args=[job_id, zcos_bytes.hex()],
+        args=[job_id, zcos_bytes.hex(), ir_hash],
         task_id=job_id,
+        queue=queue,
     )
+    log.debug("Enqueued job %s on queue '%s' (ir_hash=%s…).", job_id, queue, ir_hash[:16])
     return job_id
 
 
@@ -242,7 +271,8 @@ async def update_parameter(req: UpdateParameterRequest) -> JobResponse:
     ]
     updated_model = req.model.model_copy(update={"blocks": updated_blocks})
 
-    job_id = _enqueue(updated_model)
+    # Slider updates are low-priority; high-priority queue is for new/refine jobs
+    job_id = _enqueue(updated_model, queue="flux_low")
     return JobResponse(job_id=job_id, status="queued")
 
 

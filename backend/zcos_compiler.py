@@ -73,9 +73,20 @@ class GraphValidationError(Exception):
 # ---------------------------------------------------------------------------
 
 
-def _new_uid() -> str:
-    """Return a fresh UUID4 string."""
-    return str(uuid.uuid4())
+log = logging.getLogger(__name__)
+
+
+def _deterministic_uid(seed: str) -> str:
+    """
+    Return a deterministic UUID-formatted UID derived from *seed*.
+
+    Uses the first 128 bits of SHA-256(seed) and formats them as a UUID
+    string so Xcos sees a familiar identifier shape.  The same *seed* always
+    produces the same UID, making compiled XML reproducible across workers and
+    enabling the semantic simulation-result cache.
+    """
+    h = hashlib.sha256(seed.encode()).hexdigest()
+    return f"{h[0:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:32]}"
 
 
 def _compute_second_order_tf(
@@ -296,7 +307,7 @@ def instantiate_ports(model: SimulationModel) -> Dict[str, Dict[str, PortDefinit
 
         for i in range(1, spec.n_inputs + 1):
             port_map[block.id][f"input_{i}"] = PortDefinition(
-                id=_new_uid(),
+                id=_deterministic_uid(f"{block.id}:input:{i}"),
                 index=i,
                 port_type=PortType.INPUT,
                 connected=(block.id, i) in driven_inputs,
@@ -304,7 +315,7 @@ def instantiate_ports(model: SimulationModel) -> Dict[str, Dict[str, PortDefinit
 
         for i in range(1, spec.n_outputs + 1):
             port_map[block.id][f"output_{i}"] = PortDefinition(
-                id=_new_uid(),
+                id=_deterministic_uid(f"{block.id}:output:{i}"),
                 index=i,
                 port_type=PortType.OUTPUT,
                 connected=(block.id, i) in driven_outputs,
@@ -400,7 +411,7 @@ class XcosXMLBuilder:
         ports = self.port_map.get(block.id, {})
         for i in range(1, spec.n_inputs + 1):
             port_def = ports.get(f"input_{i}")
-            uid = port_def.id if port_def else _new_uid()
+            uid = port_def.id if port_def else _deterministic_uid(f"{block.id}:input:{i}")
             self._xml_port_uid[(block.id, "input", i)] = uid
             port_el = etree.SubElement(el, "ExplicitInputPort")
             port_el.set("id", uid)
@@ -412,7 +423,7 @@ class XcosXMLBuilder:
         # Output ports
         for i in range(1, spec.n_outputs + 1):
             port_def = ports.get(f"output_{i}")
-            uid = port_def.id if port_def else _new_uid()
+            uid = port_def.id if port_def else _deterministic_uid(f"{block.id}:output:{i}")
             self._xml_port_uid[(block.id, "output", i)] = uid
             port_el = etree.SubElement(el, "ExplicitOutputPort")
             port_el.set("id", uid)
@@ -514,6 +525,11 @@ def compile_to_zcos(model: SimulationModel) -> bytes:
 
     # Stage 2: Topological sort — ensures Xcos receives blocks in dependency order
     sorted_blocks = ExecutionGraph(model).sorted_blocks()
+    log.debug(
+        "Topological execution order for model %s: [%s]",
+        model.id,
+        ", ".join(f"{b.type.value}({b.id[:8]}…)" for b in sorted_blocks),
+    )
 
     # Stage 3: Instantiate ports
     port_map = instantiate_ports(model)
@@ -529,6 +545,7 @@ def compile_to_zcos(model: SimulationModel) -> bytes:
         encoding="UTF-8",
         pretty_print=False,
     )
+    log.debug("Generated ZCOS XML for model %s: %d bytes (pre-compression).", model.id, len(xml_bytes))
 
     # Stage 5: Gzip
     return gzip.compress(xml_bytes, compresslevel=9)

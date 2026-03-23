@@ -22,6 +22,8 @@ const GHOST_COLOR = "rgba(148, 163, 184, 0.3)";
 interface Props {
   result: SimulationResult | null;
   ghostResult: SimulationResult | null;
+  /** When true, shows a "Computing…" badge so the user knows a new run is in flight. */
+  isLoading?: boolean;
 }
 
 function buildChartData(result: SimulationResult): Record<string, number>[] {
@@ -34,7 +36,7 @@ function buildChartData(result: SimulationResult): Record<string, number>[] {
   });
 }
 
-export function SimulationGraph({ result, ghostResult }: Props) {
+export function SimulationGraph({ result, ghostResult, isLoading = false }: Props) {
   if (!result || result.status !== "success") {
     return (
       <div
@@ -49,6 +51,8 @@ export function SimulationGraph({ result, ghostResult }: Props) {
       >
         {result?.status === "error"
           ? null /* error shown by ErrorBanner */
+          : isLoading
+          ? "Running simulation…"
           : "Generate a simulation to see results here."}
       </div>
     );
@@ -62,7 +66,7 @@ export function SimulationGraph({ result, ghostResult }: Props) {
   const signalKeys = Object.keys(result.signals);
 
   return (
-    <div style={{ flex: 1, padding: "16px 16px 0" }}>
+    <div style={{ flex: 1, padding: "16px 16px 0", position: "relative" }}>
       <div
         style={{
           display: "flex",
@@ -74,11 +78,28 @@ export function SimulationGraph({ result, ghostResult }: Props) {
         <span style={{ color: "#94a3b8", fontSize: 12 }}>
           Simulation Output
         </span>
-        {result.execution_time_ms != null && (
-          <span style={{ color: "#475569", fontSize: 11 }}>
-            Executed in {result.execution_time_ms.toFixed(0)} ms
-          </span>
-        )}
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {/* Progressive loading badge — visible while next result is computing */}
+          {isLoading && (
+            <span
+              style={{
+                fontSize: 11,
+                color: "#818cf8",
+                background: "rgba(99, 102, 241, 0.12)",
+                border: "1px solid rgba(99, 102, 241, 0.35)",
+                borderRadius: 4,
+                padding: "2px 8px",
+              }}
+            >
+              ⟳ Computing…
+            </span>
+          )}
+          {result.execution_time_ms != null && (
+            <span style={{ color: "#475569", fontSize: 11 }}>
+              Executed in {result.execution_time_ms.toFixed(0)} ms
+            </span>
+          )}
+        </div>
       </div>
       <ResponsiveContainer width="100%" height={320}>
         <LineChart>

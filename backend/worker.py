@@ -33,6 +33,7 @@ import os
 import subprocess
 import tempfile
 import textwrap
+import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -65,6 +66,7 @@ celery_app.conf.update(
     task_track_started=True,
     worker_prefetch_multiplier=1,   # one task at a time per worker process
     task_acks_late=True,            # acknowledge only after completion
+    task_default_queue="flux_high", # new/refine simulations go here by default
 )
 
 # ---------------------------------------------------------------------------
@@ -72,7 +74,8 @@ celery_app.conf.update(
 # ---------------------------------------------------------------------------
 
 _CACHE_TTL_S = 3600  # cache successful results for 1 hour
-_CACHE_KEY_PREFIX = "flux:sim:"
+_CACHE_KEY_IR_PREFIX = "flux:sim:ir:"    # preferred: keyed by semantic IR hash
+_CACHE_KEY_ZCOS_PREFIX = "flux:sim:zcos:" # fallback: keyed by ZCOS bytes hash
 
 _sim_cache: Optional[_redis_sync.Redis] = None  # type: ignore[type-arg]
 
@@ -85,10 +88,15 @@ def _get_sim_cache() -> _redis_sync.Redis:  # type: ignore[type-arg]
     return _sim_cache
 
 
-def _cache_key(zcos_bytes_hex: str) -> str:
-    """Derive a stable cache key from the SHA-256 digest of the ZCOS payload."""
+def _ir_cache_key(ir_hash: str) -> str:
+    """Cache key derived from the semantic IR hash (preferred)."""
+    return f"{_CACHE_KEY_IR_PREFIX}{ir_hash}"
+
+
+def _zcos_cache_key(zcos_bytes_hex: str) -> str:
+    """Cache key derived from the ZCOS payload hash (legacy fallback)."""
     digest = hashlib.sha256(zcos_bytes_hex.encode()).hexdigest()
-    return f"{_CACHE_KEY_PREFIX}{digest}"
+    return f"{_CACHE_KEY_ZCOS_PREFIX}{digest}"
 
 # ---------------------------------------------------------------------------
 # Warm Scilab process (process-local singleton)
@@ -98,6 +106,10 @@ SCILAB_CMD = os.environ.get("SCILAB_CMD", "scilab-cli")
 SCILAB_TIMEOUT_S = int(os.environ.get("SCILAB_TIMEOUT_S", "60"))
 
 _warm_scilab: Optional[subprocess.Popen] = None  # type: ignore[type-arg]
+# Guards all reads and writes of _warm_scilab so that startup/teardown signal
+# handlers and task execution cannot race even if the OS scheduler interrupts
+# between the poll() check and the subsequent read/write.
+_scilab_lock = threading.Lock()
 
 
 def _spawn_scilab() -> subprocess.Popen:  # type: ignore[type-arg]
@@ -135,7 +147,9 @@ def warm_start_scilab(**_kwargs: object) -> None:
     """Called once per worker process at startup."""
     global _warm_scilab
     try:
-        _warm_scilab = _spawn_scilab()
+        proc = _spawn_scilab()
+        with _scilab_lock:
+            _warm_scilab = proc
     except Exception:
         log.warning("Could not pre-warm Scilab; will spawn per-job.", exc_info=True)
 
@@ -144,18 +158,20 @@ def warm_start_scilab(**_kwargs: object) -> None:
 def teardown_scilab(**_kwargs: object) -> None:
     """Gracefully terminate the warm Scilab process on worker shutdown."""
     global _warm_scilab
-    if _warm_scilab and _warm_scilab.poll() is None:
-        _warm_scilab.terminate()
+    with _scilab_lock:
+        if _warm_scilab and _warm_scilab.poll() is None:
+            _warm_scilab.terminate()
         _warm_scilab = None
 
 
 def _get_scilab() -> subprocess.Popen:  # type: ignore[type-arg]
     """Return the warm process, respawning if it has died."""
     global _warm_scilab
-    if _warm_scilab is None or _warm_scilab.poll() is not None:
-        log.info("Warm Scilab process is dead; respawning.")
-        _warm_scilab = _spawn_scilab()
-    return _warm_scilab
+    with _scilab_lock:
+        if _warm_scilab is None or _warm_scilab.poll() is not None:
+            log.info("Warm Scilab process is dead; respawning.")
+            _warm_scilab = _spawn_scilab()
+        return _warm_scilab
 
 
 # ---------------------------------------------------------------------------
@@ -211,25 +227,29 @@ def _parse_csv(csv_path: str) -> tuple[list[float], dict[str, list[float]]]:
 
 
 @celery_app.task(bind=True, name="flux.run_simulation", max_retries=1)
-def run_simulation(self, job_id: str, zcos_bytes_hex: str) -> dict:  # type: ignore[override]
+def run_simulation(self, job_id: str, zcos_bytes_hex: str, ir_hash: str = "") -> dict:  # type: ignore[override]
     """
     Execute a simulation given the hex-encoded gzip ZCOS bytes.
 
-    Checks a Redis cache keyed by the SHA-256 hash of the ZCOS payload before
-    spawning Scilab.  Identical models are returned instantly from cache.
+    Cache strategy
+    --------------
+    If *ir_hash* is provided (computed from the semantic IR before compilation),
+    it is used as the cache key.  This gives semantic cache hits: two requests
+    for the same model topology/parameters hit the cache even if the model's
+    top-level UUID differs.  Falls back to hashing the ZCOS bytes for
+    backwards-compatibility when *ir_hash* is empty.
 
     Returns a ``SimulationResult`` serialised as a dict (JSON-compatible).
     """
     start_ms = time.monotonic() * 1000
 
     # ── Cache lookup ──────────────────────────────────────────────────────
-    key = _cache_key(zcos_bytes_hex)
+    key = _ir_cache_key(ir_hash) if ir_hash else _zcos_cache_key(zcos_bytes_hex)
     try:
         cached = _get_sim_cache().get(key)
         if cached is not None:
-            log.info("Cache hit for job %s (key=%s…).", job_id, key[:16])
+            log.info("Cache hit for job %s (key=%s…).", job_id, key[:24])
             result_dict: dict = json.loads(cached)
-            # Return with the *current* job_id so the caller can correlate.
             result_dict["job_id"] = job_id
             return result_dict
     except Exception:  # noqa: BLE001
@@ -277,6 +297,17 @@ def run_simulation(self, job_id: str, zcos_bytes_hex: str) -> dict:  # type: ign
         if "FLUX_DONE" not in output:
             # Extract a clean snippet from Scilab's output for internal logging
             log.error("Scilab did not signal completion for job %s:\n%s", job_id, output)
+            # The Scilab process is in an unknown state; kill it so the next
+            # job gets a fresh process rather than a corrupted REPL.
+            global _warm_scilab
+            with _scilab_lock:
+                if _warm_scilab is not None and _warm_scilab.poll() is None:
+                    log.warning("Killing stuck Scilab process (PID=%s).", _warm_scilab.pid)
+                    try:
+                        _warm_scilab.kill()
+                    except OSError:
+                        pass
+                _warm_scilab = None
             return SimulationResult(
                 job_id=job_id,
                 status="error",
