@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Project Flux — PromptBar
+// System Link — PromptBar
 // The natural-language input at the top of the workspace.
 // ---------------------------------------------------------------------------
 

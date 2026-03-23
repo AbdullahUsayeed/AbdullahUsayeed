@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Project Flux — NodeCanvas (React Flow workspace)
+// System Link — NodeCanvas (React Flow workspace)
 // Renders the block diagram as interactive nodes.
 // Dragging a node updates its position in the model (visual only).
 // ---------------------------------------------------------------------------

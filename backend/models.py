@@ -1,5 +1,5 @@
 """
-Project Flux — Intermediate Representation (IR) Models
+System Link — Intermediate Representation (IR) Models
 =======================================================
 These Pydantic V2 models form the canonical "language" between:
   - The AI engine  (produces SimulationModel from NL prompts)

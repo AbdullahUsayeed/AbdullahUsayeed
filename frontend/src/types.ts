@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Project Flux — Shared TypeScript Types
+// System Link — Shared TypeScript Types
 // Mirrors the Pydantic models in backend/models.py
 // ---------------------------------------------------------------------------
 
@@ -96,7 +96,20 @@ export interface BlockSpec {
 
 export type BlockRegistry = Record<string, BlockSpec>;
 
-// WebSocket message union
 export type WsMessage =
   | { status: "running"; job_id: string }
   | SimulationResult;
+
+// ---------------------------------------------------------------------------
+// License / tier types
+// ---------------------------------------------------------------------------
+
+export type LicenseTier = "free" | "pro";
+
+export interface LicenseStatus {
+  tier: LicenseTier;
+  /** The raw license key entered by the user (stored in localStorage). */
+  key: string | null;
+  /** True while validation is in progress. */
+  validating: boolean;
+}

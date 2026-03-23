@@ -1,5 +1,5 @@
 """
-Project Flux — ZCOS Compiler
+System Link — ZCOS Compiler
 ==============================
 Transforms a validated ``SimulationModel`` IR into a gzip-compressed Xcos
 (.zcos) file that Scilab can execute headlessly.

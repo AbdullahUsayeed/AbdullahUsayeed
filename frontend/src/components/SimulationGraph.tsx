@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Project Flux — SimulationGraph
+// System Link — SimulationGraph
 // Renders the time-domain simulation result using Recharts.
 // Ghost traces (previous run) are shown as light gray lines.
 // ---------------------------------------------------------------------------

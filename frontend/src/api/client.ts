@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Project Flux — API Client
+// System Link — API Client
 // ---------------------------------------------------------------------------
 
 import type {
@@ -11,12 +11,34 @@ import type {
 
 const BASE = "/api";
 
+// ── License key storage (read by helpers below) ──────────────────────────────
+
+const LS_LICENSE_KEY = "sl:license_key";
+
+function getLicenseKey(): string | null {
+  try {
+    return localStorage.getItem(LS_LICENSE_KEY);
+  } catch {
+    return null;
+  }
+}
+
 // ── REST helpers ─────────────────────────────────────────────────────────────
+
+function buildHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...extra,
+  };
+  const key = getLicenseKey();
+  if (key) headers["X-License-Key"] = key;
+  return headers;
+}
 
 async function post<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: buildHeaders(),
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -96,6 +118,42 @@ export async function diagnoseSimulation(
   error: string
 ): Promise<DiagnoseResponse> {
   return post<DiagnoseResponse>("/simulate/diagnose", { model, error });
+}
+
+// ── License ───────────────────────────────────────────────────────────────────
+
+export interface LicenseValidateResponse {
+  valid: boolean;
+  tier: "free" | "pro";
+  message: string;
+}
+
+export interface LicensePortalResponse {
+  manage_url: string;
+  purchase_url: string;
+}
+
+/**
+ * Validate a Gumroad license key with the backend.
+ * The backend caches results for 24 hours so this is safe to call on startup.
+ */
+export async function validateLicenseKey(
+  licenseKey: string
+): Promise<LicenseValidateResponse> {
+  const res = await fetch(`${BASE}/license/validate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ license_key: licenseKey }),
+  });
+  if (!res.ok) {
+    throw new Error("License validation request failed.");
+  }
+  return res.json() as Promise<LicenseValidateResponse>;
+}
+
+/** Fetch Gumroad subscription management and purchase URLs. */
+export async function getLicensePortal(): Promise<LicensePortalResponse> {
+  return get<LicensePortalResponse>("/license/portal");
 }
 
 // ── WebSocket ────────────────────────────────────────────────────────────────

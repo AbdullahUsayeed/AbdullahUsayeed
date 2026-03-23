@@ -1,5 +1,5 @@
 """
-Project Flux — AI Engine (SimulationArchitect)
+System Link — AI Engine (SimulationArchitect)
 ================================================
 ``SimulationArchitect`` is the bridge between a free-form user prompt and a
 fully typed ``SimulationModel``.  It is **LLM-agnostic**: the concrete client

@@ -1,5 +1,5 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# Project Flux — Docker Compose
+# System Link — Docker Compose
 # ─────────────────────────────────────────────────────────────────────────────
 # Services
 # ─────────────────────────────────────────────────────────────────────────────
@@ -30,6 +30,9 @@ x-backend-env: &backend-env
   SCILAB_CMD: scilab-cli
   SCILAB_TIMEOUT_S: "60"
   ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-*}
+  # Pro tier — set these on your cloud server only; never commit real values
+  CLOUD_OPENAI_API_KEY: ${CLOUD_OPENAI_API_KEY:-}
+  GUMROAD_PRODUCT_PERMALINK: ${GUMROAD_PRODUCT_PERMALINK:-}
 
 services:
   # ── Redis (broker + result backend) ───────────────────────────────────────

@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Project Flux — useSimulation hook
+// System Link — useSimulation hook
 // Orchestrates the generate → subscribe → result lifecycle.
 //
 // Stale-result prevention: a generation counter ensures that if the user

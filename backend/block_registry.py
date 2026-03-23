@@ -1,5 +1,5 @@
 """
-Project Flux — Block Registry
+System Link — Block Registry
 ==============================
 The Block Registry is the single source of truth for every Xcos block type
 that the platform supports.  It encodes:

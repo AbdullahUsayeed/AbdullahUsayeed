@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Project Flux — ErrorBanner
+// System Link — ErrorBanner
 // Displays user-friendly error messages from the simulation engine.
 // When a model is available, shows a "Why did this fail?" button that calls
 // the /simulate/diagnose endpoint and renders the AI's explanation inline.

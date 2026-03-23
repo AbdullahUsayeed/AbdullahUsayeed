@@ -1,5 +1,5 @@
 """
-Project Flux — Model Auto-Fixer
+System Link — Model Auto-Fixer
 ================================
 Post-AI correction layer that applies deterministic, LLM-free fixes to a
 ``SimulationModel`` before it reaches the graph compiler.

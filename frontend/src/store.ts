@@ -1,9 +1,9 @@
 // ---------------------------------------------------------------------------
-// Project Flux — Zustand Store
+// System Link — Zustand Store
 // ---------------------------------------------------------------------------
 
 import { create } from "zustand";
-import type { BlockRegistry, SimulationModel, SimulationResult } from "./types";
+import type { BlockRegistry, LicenseStatus, SimulationModel, SimulationResult } from "./types";
 
 export type AppStatus =
   | "idle"
@@ -11,6 +11,26 @@ export type AppStatus =
   | "running"
   | "success"
   | "error";
+
+// ── License key persistence ──────────────────────────────────────────────────
+const LS_LICENSE_KEY = "sl:license_key";
+
+function loadSavedLicenseKey(): string | null {
+  try {
+    return localStorage.getItem(LS_LICENSE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function saveLicenseKey(key: string | null): void {
+  try {
+    if (key) localStorage.setItem(LS_LICENSE_KEY, key);
+    else localStorage.removeItem(LS_LICENSE_KEY);
+  } catch {
+    // storage unavailable — silently ignore
+  }
+}
 
 interface FluxStore {
   // Model state
@@ -33,6 +53,12 @@ interface FluxStore {
   blockRegistry: BlockRegistry | null;
   setBlockRegistry: (reg: BlockRegistry) => void;
 
+  // License / tier state
+  license: LicenseStatus;
+  setLicense: (l: LicenseStatus) => void;
+  activateLicense: (key: string) => void;
+  deactivateLicense: () => void;
+
   // Actions
   commitResult: (r: SimulationResult) => void;
 }
@@ -54,6 +80,24 @@ export const useFluxStore = create<FluxStore>((set, get) => ({
   setErrorMessage: (msg) => set({ errorMessage: msg }),
   blockRegistry: null,
   setBlockRegistry: (reg) => set({ blockRegistry: reg }),
+
+  license: {
+    tier: "free",
+    key: loadSavedLicenseKey(),
+    validating: false,
+  },
+
+  setLicense: (l) => set({ license: l }),
+
+  activateLicense: (key) => {
+    saveLicenseKey(key);
+    set({ license: { tier: "pro", key, validating: false } });
+  },
+
+  deactivateLicense: () => {
+    saveLicenseKey(null);
+    set({ license: { tier: "free", key: null, validating: false } });
+  },
 
   commitResult: (r) => {
     const prev = get().result;

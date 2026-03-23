@@ -1,13 +1,17 @@
 """
-Project Flux — FastAPI Application
-====================================
+System Link — FastAPI Application
+===================================
 Exposes the simulation pipeline over HTTP and WebSocket:
 
   POST  /simulate          → Enqueues a new simulation job and returns job_id
   POST  /simulate/refine   → AI refines an existing model
   POST  /simulate/update   → Hot-patches a parameter and re-runs (slider tuning)
+  POST  /simulate/diagnose → AI explains a simulation error and suggests a fix
   GET   /simulate/{job_id} → Polls job status / result (REST fallback)
   WS    /ws/{job_id}       → Streams real-time simulation result to the browser
+
+  POST  /license/validate  → Validates a Gumroad license key; returns tier
+  GET   /license/portal    → Returns the Gumroad subscription-management URL
 
   GET   /blocks            → Returns the full Block Registry (drives UI palette)
   GET   /health            → Liveness probe
@@ -19,6 +23,9 @@ Design notes
   so workers can push results without polling.
 • CORS is intentionally permissive for development; tighten in production via
   the ALLOWED_ORIGINS environment variable.
+• When a valid ``X-License-Key`` header is present on AI endpoints the backend
+  uses CLOUD_OPENAI_API_KEY (the owner's key) instead of the local
+  OPENAI_API_KEY, enabling the Pro cloud-AI tier.
 """
 
 from __future__ import annotations
@@ -32,12 +39,18 @@ import uuid
 from typing import Any, Dict, Optional
 
 import redis.asyncio as aioredis
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from backend.ai_engine import SimulationArchitect
 from backend.block_registry import BLOCK_REGISTRY
+from backend.license import (
+    GUMROAD_MANAGE_URL,
+    GUMROAD_PURCHASE_URL,
+    cloud_openai_key,
+    validate_license,
+)
 from backend.models import SimulationModel, SimulationResult
 from backend.worker import celery_app, run_simulation
 from backend.zcos_compiler import GraphValidationError, compile_to_zcos
@@ -49,11 +62,11 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 app = FastAPI(
-    title="Project Flux API",
+    title="System Link API",
     version="1.0.0",
     description=(
-        "AI-native simulation platform. "
-        "Simulink-grade control-systems simulation, powered by Scilab Xcos."
+        "AI-native control-systems simulation platform. "
+        "Professional-grade simulation, powered by AI."
     ),
 )
 
@@ -63,11 +76,11 @@ app.add_middleware(
     allow_origins=_ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["*", "X-License-Key"],
 )
 
 # ---------------------------------------------------------------------------
-# Redis client (async, for WebSocket pub/sub)
+# Redis client (async, for WebSocket pub/sub + license cache)
 # ---------------------------------------------------------------------------
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379/0")
@@ -82,17 +95,51 @@ async def get_redis() -> aioredis.Redis:  # type: ignore[type-arg]
 
 
 # ---------------------------------------------------------------------------
-# Dependency: SimulationArchitect (singleton)
+# Dependency: SimulationArchitect
 # ---------------------------------------------------------------------------
 
-_architect: Optional[SimulationArchitect] = None
+_architect_cache: Dict[Optional[str], SimulationArchitect] = {}
 
 
-def get_architect() -> SimulationArchitect:
-    global _architect
-    if _architect is None:
-        _architect = SimulationArchitect()
-    return _architect
+def _get_architect(api_key: Optional[str] = None) -> SimulationArchitect:
+    """
+    Return a SimulationArchitect for the given *api_key*.
+
+    Two singletons are maintained:
+      • ``None``  — uses the default env-var OPENAI_API_KEY (free/self-hosted)
+      • cloud key — uses CLOUD_OPENAI_API_KEY (Pro subscribers)
+
+    This avoids re-instantiating the client on every request.
+    """
+    if api_key not in _architect_cache:
+        import openai
+
+        client = openai.OpenAI(
+            api_key=api_key or os.environ.get("OPENAI_API_KEY"),
+            base_url=os.environ.get("OPENAI_BASE_URL"),
+        )
+        _architect_cache[api_key] = SimulationArchitect(client=client)
+    return _architect_cache[api_key]
+
+
+async def _resolve_architect(
+    x_license_key: Optional[str] = None,
+) -> SimulationArchitect:
+    """
+    Resolve which SimulationArchitect to use based on the license key header.
+
+    If the header contains a valid Gumroad license key and the cloud API key
+    is configured, the Pro architect (using CLOUD_OPENAI_API_KEY) is returned.
+    Otherwise the free/self-hosted architect (OPENAI_API_KEY) is used.
+    """
+    if x_license_key:
+        redis = await get_redis()
+        is_pro = await validate_license(x_license_key, redis)
+        cloud_key = cloud_openai_key()
+        if is_pro and cloud_key:
+            log.debug("Serving request with cloud AI (Pro tier).")
+            return _get_architect(cloud_key)
+    return _get_architect(None)
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +177,21 @@ class DiagnoseRequest(BaseModel):
 class DiagnoseResponse(BaseModel):
     diagnosis: str
     suggestion: str
+
+
+class LicenseValidateRequest(BaseModel):
+    license_key: str
+
+
+class LicenseValidateResponse(BaseModel):
+    valid: bool
+    tier: str  # "pro" | "free"
+    message: str
+
+
+class LicensePortalResponse(BaseModel):
+    manage_url: str
+    purchase_url: str
 
 
 # ---------------------------------------------------------------------------
@@ -251,7 +313,7 @@ def _enqueue(model: SimulationModel, queue: str = "flux_high") -> str:
 
 @app.get("/health")
 async def health() -> Dict[str, str]:
-    return {"status": "ok", "service": "project-flux-api"}
+    return {"status": "ok", "service": "system-link-api"}
 
 
 @app.get("/blocks")
@@ -281,13 +343,74 @@ async def list_blocks() -> Dict[str, Any]:
     }
 
 
+# ---------------------------------------------------------------------------
+# License endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.post("/license/validate", response_model=LicenseValidateResponse)
+async def license_validate(req: LicenseValidateRequest) -> LicenseValidateResponse:
+    """
+    Validate a Gumroad license key.
+
+    Returns ``{"valid": true, "tier": "pro"}`` for active subscriptions, or
+    ``{"valid": false, "tier": "free"}`` for invalid / expired keys.
+
+    Results are cached in Redis for 24 hours to avoid hitting the Gumroad
+    API on every keystroke.
+    """
+    redis = await get_redis()
+    is_valid = await validate_license(req.license_key, redis)
+
+    if is_valid:
+        return LicenseValidateResponse(
+            valid=True,
+            tier="pro",
+            message="Pro license activated. Thank you for subscribing!",
+        )
+    return LicenseValidateResponse(
+        valid=False,
+        tier="free",
+        message=(
+            "License key not recognised or subscription is no longer active. "
+            "Please check your key and try again."
+        ),
+    )
+
+
+@app.get("/license/portal", response_model=LicensePortalResponse)
+async def license_portal() -> LicensePortalResponse:
+    """
+    Return URLs for Gumroad subscription management.
+
+    ``manage_url``   — Gumroad's "My Purchases" page where users can cancel.
+    ``purchase_url`` — Product page to start a new subscription.
+    """
+    return LicensePortalResponse(
+        manage_url=GUMROAD_MANAGE_URL,
+        purchase_url=GUMROAD_PURCHASE_URL,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Simulation routes
+# ---------------------------------------------------------------------------
+
+
 @app.post("/simulate", response_model=JobResponse)
-async def simulate(req: GenerateRequest) -> JobResponse:
+async def simulate(
+    req: GenerateRequest,
+    x_license_key: Optional[str] = Header(default=None),
+) -> JobResponse:
     """
     Generate a SimulationModel from a natural-language prompt, compile it,
     and enqueue the simulation job.
+
+    If a valid ``X-License-Key`` header is present and ``CLOUD_OPENAI_API_KEY``
+    is configured, the cloud (Pro) AI engine is used; otherwise the self-hosted
+    engine (``OPENAI_API_KEY``) is used.
     """
-    architect = get_architect()
+    architect = await _resolve_architect(x_license_key)
     try:
         model = architect.generate(req.prompt)
     except ValueError as exc:
@@ -302,12 +425,15 @@ async def simulate(req: GenerateRequest) -> JobResponse:
 
 
 @app.post("/simulate/refine", response_model=JobResponse)
-async def refine(req: RefineRequest) -> JobResponse:
+async def refine(
+    req: RefineRequest,
+    x_license_key: Optional[str] = Header(default=None),
+) -> JobResponse:
     """
     Modify an existing model via a natural-language instruction and re-run.
     Logs a structured diff so developers can see exactly what the AI changed.
     """
-    architect = get_architect()
+    architect = await _resolve_architect(x_license_key)
     try:
         updated_model = architect.refine(req.model, req.instruction)
     except ValueError as exc:
@@ -319,7 +445,10 @@ async def refine(req: RefineRequest) -> JobResponse:
 
 
 @app.post("/simulate/diagnose", response_model=DiagnoseResponse)
-async def diagnose_simulation(req: DiagnoseRequest) -> DiagnoseResponse:
+async def diagnose_simulation(
+    req: DiagnoseRequest,
+    x_license_key: Optional[str] = Header(default=None),
+) -> DiagnoseResponse:
     """
     Ask the AI to diagnose a simulation error and suggest a specific fix.
 
@@ -327,7 +456,7 @@ async def diagnose_simulation(req: DiagnoseRequest) -> DiagnoseResponse:
     Returns a plain-English ``diagnosis`` and an actionable ``suggestion``.
     Falls back gracefully if the LLM is unavailable.
     """
-    architect = get_architect()
+    architect = await _resolve_architect(x_license_key)
     result = architect.diagnose(req.model, req.error)
     return DiagnoseResponse(**result)
 

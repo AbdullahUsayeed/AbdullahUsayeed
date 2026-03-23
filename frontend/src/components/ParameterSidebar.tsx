@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Project Flux — ParameterSidebar
+// System Link — ParameterSidebar
 // "Smart Sliders" for real-time parameter tuning.
 // Sliders are generated dynamically from the Block Registry.
 // Changes are debounced (150 ms) so the backend only receives one request
