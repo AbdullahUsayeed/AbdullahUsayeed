@@ -1,0 +1,43 @@
+# Environment — never commit real credentials
+.env
+*.env.local
+*.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+*.whl
+.venv/
+venv/
+env/
+.tox/
+.nox/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+*.cover
+
+# Node / frontend
+node_modules/
+frontend/dist/
+frontend/build/
+*.tsbuildinfo
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

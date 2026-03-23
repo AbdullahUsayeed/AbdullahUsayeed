@@ -12,6 +12,9 @@ Pipeline
   GraphValidator  ←  raises GraphValidationError on topology problems
       │
       ▼
+  ExecutionGraph  ←  topological sort (Kahn's algorithm); detects cycles
+      │
+      ▼
   PortInstantiator  ←  assigns UID to every port using Block Registry
       │
       ▼
@@ -34,7 +37,8 @@ from __future__ import annotations
 
 import gzip
 import uuid
-from typing import Dict, List, Tuple
+from collections import deque
+from typing import Dict, List, Set, Tuple
 
 from lxml import etree
 
@@ -190,7 +194,82 @@ class GraphValidator:
 
 
 # ---------------------------------------------------------------------------
-# Stage 2: Port Instantiator
+# Stage 2: Execution Graph (topological sort)
+# ---------------------------------------------------------------------------
+
+
+class ExecutionGraph:
+    """
+    Computes a stable topological ordering of blocks using Kahn's algorithm.
+
+    This ensures Xcos receives blocks in dependency order:
+      sources (Step, Sine, Constant) → operations (Gain, Sum, …) → sinks (Scope)
+
+    Without this ordering, Xcos may encounter algebraic-loop errors or produce
+    non-deterministic results for multi-input/output and nested subsystems.
+
+    Raises
+    ------
+    GraphValidationError
+        If the connection graph contains a cycle (algebraic loop without a
+        memory element).  The error message guides the user to break the loop
+        with an Integrator block.
+    """
+
+    def __init__(self, model: SimulationModel) -> None:
+        self.model = model
+
+    def sorted_blocks(self) -> List[BlockDefinition]:
+        """
+        Return blocks in topological (dependency-first) order.
+
+        Blocks at the same level are sorted by their canonical type name so
+        that compilation is fully deterministic regardless of the order the AI
+        produced them.
+        """
+        block_map: Dict[str, BlockDefinition] = {b.id: b for b in self.model.blocks}
+
+        # Build adjacency list and in-degree map from signal-flow connections.
+        # An edge source_block → target_block means "source must be initialised
+        # before target" (signal flows from source to target).
+        adjacency: Dict[str, Set[str]] = {b.id: set() for b in self.model.blocks}
+        in_degree: Dict[str, int] = {b.id: 0 for b in self.model.blocks}
+
+        for conn in self.model.connections:
+            src, dst = conn.source_block, conn.target_block
+            if dst not in adjacency[src]:
+                adjacency[src].add(dst)
+                in_degree[dst] += 1
+
+        # Seed the queue with zero-in-degree nodes, sorted for determinism.
+        queue: deque[str] = deque(
+            sorted(
+                (bid for bid, deg in in_degree.items() if deg == 0),
+                key=lambda bid: block_map[bid].type.value,
+            )
+        )
+
+        result: List[str] = []
+        while queue:
+            node = queue.popleft()
+            result.append(node)
+            for neighbor in sorted(adjacency[node]):
+                in_degree[neighbor] -= 1
+                if in_degree[neighbor] == 0:
+                    queue.append(neighbor)
+
+        if len(result) != len(self.model.blocks):
+            raise GraphValidationError(
+                "Your model contains an algebraic loop — a circular signal path "
+                "with no memory element. Xcos cannot solve this algebraically. "
+                "Add an INTEGRATOR block in the feedback path to break the cycle."
+            )
+
+        return [block_map[bid] for bid in result]
+
+
+# ---------------------------------------------------------------------------
+# Stage 3: Port Instantiator
 # ---------------------------------------------------------------------------
 
 
@@ -232,7 +311,7 @@ def instantiate_ports(model: SimulationModel) -> Dict[str, Dict[str, PortDefinit
 
 
 # ---------------------------------------------------------------------------
-# Stage 3: ZCOS XML Builder
+# Stage 4: ZCOS XML Builder
 # ---------------------------------------------------------------------------
 
 _XCOS_NS = "http://www.scilab.org/ns/scicos/1.0"
@@ -258,9 +337,11 @@ class XcosXMLBuilder:
         self,
         model: SimulationModel,
         port_map: Dict[str, Dict[str, PortDefinition]],
+        sorted_blocks: List[BlockDefinition],
     ) -> None:
         self.model = model
         self.port_map = port_map
+        self._sorted_blocks = sorted_blocks
         # Maps (block_id, "input"|"output", index) → UID used in the XML
         self._xml_port_uid: Dict[Tuple[str, str, int], str] = {}
 
@@ -279,7 +360,7 @@ class XcosXMLBuilder:
         cell1.set("id", "1")
         cell1.set("parent", "0")
 
-        for block in self.model.blocks:
+        for block in self._sorted_blocks:
             self._add_block(root, block)
 
         for conn in self.model.connections:
@@ -407,7 +488,7 @@ class XcosXMLBuilder:
 
 def compile_to_zcos(model: SimulationModel) -> bytes:
     """
-    Full pipeline: validate → instantiate ports → build XML → gzip.
+    Full pipeline: validate → topological sort → instantiate ports → build XML → gzip.
 
     Parameters
     ----------
@@ -422,16 +503,20 @@ def compile_to_zcos(model: SimulationModel) -> bytes:
     Raises
     ------
     GraphValidationError
-        If the model topology is invalid.  Message is always user-friendly.
+        If the model topology is invalid or contains an algebraic loop.
+        Message is always user-friendly.
     """
-    # Stage 1: Validate
+    # Stage 1: Validate topology
     GraphValidator(model).validate()
 
-    # Stage 2: Instantiate ports
+    # Stage 2: Topological sort — ensures Xcos receives blocks in dependency order
+    sorted_blocks = ExecutionGraph(model).sorted_blocks()
+
+    # Stage 3: Instantiate ports
     port_map = instantiate_ports(model)
 
-    # Stage 3: Build XML tree
-    builder = XcosXMLBuilder(model, port_map)
+    # Stage 4: Build XML tree (using dependency-ordered block list)
+    builder = XcosXMLBuilder(model, port_map, sorted_blocks)
     root = builder.build()
 
     # Serialise to bytes
@@ -442,5 +527,5 @@ def compile_to_zcos(model: SimulationModel) -> bytes:
         pretty_print=False,
     )
 
-    # Stage 4: Gzip
+    # Stage 5: Gzip
     return gzip.compress(xml_bytes, compresslevel=9)

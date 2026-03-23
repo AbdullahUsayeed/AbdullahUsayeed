@@ -25,7 +25,9 @@ REDIS_URL           Celery broker URL (default: "redis://redis:6379/0")
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
+import json
 import logging
 import os
 import subprocess
@@ -35,6 +37,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
+import redis as _redis_sync
 from celery import Celery
 from celery.signals import worker_init, worker_shutdown
 
@@ -63,6 +66,29 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,   # one task at a time per worker process
     task_acks_late=True,            # acknowledge only after completion
 )
+
+# ---------------------------------------------------------------------------
+# Simulation result cache (Redis, synchronous)
+# ---------------------------------------------------------------------------
+
+_CACHE_TTL_S = 3600  # cache successful results for 1 hour
+_CACHE_KEY_PREFIX = "flux:sim:"
+
+_sim_cache: Optional[_redis_sync.Redis] = None  # type: ignore[type-arg]
+
+
+def _get_sim_cache() -> _redis_sync.Redis:  # type: ignore[type-arg]
+    """Return a lazily-initialised synchronous Redis client used for caching."""
+    global _sim_cache
+    if _sim_cache is None:
+        _sim_cache = _redis_sync.from_url(REDIS_URL, decode_responses=True)
+    return _sim_cache
+
+
+def _cache_key(zcos_bytes_hex: str) -> str:
+    """Derive a stable cache key from the SHA-256 digest of the ZCOS payload."""
+    digest = hashlib.sha256(zcos_bytes_hex.encode()).hexdigest()
+    return f"{_CACHE_KEY_PREFIX}{digest}"
 
 # ---------------------------------------------------------------------------
 # Warm Scilab process (process-local singleton)
@@ -189,9 +215,25 @@ def run_simulation(self, job_id: str, zcos_bytes_hex: str) -> dict:  # type: ign
     """
     Execute a simulation given the hex-encoded gzip ZCOS bytes.
 
+    Checks a Redis cache keyed by the SHA-256 hash of the ZCOS payload before
+    spawning Scilab.  Identical models are returned instantly from cache.
+
     Returns a ``SimulationResult`` serialised as a dict (JSON-compatible).
     """
     start_ms = time.monotonic() * 1000
+
+    # ── Cache lookup ──────────────────────────────────────────────────────
+    key = _cache_key(zcos_bytes_hex)
+    try:
+        cached = _get_sim_cache().get(key)
+        if cached is not None:
+            log.info("Cache hit for job %s (key=%s…).", job_id, key[:16])
+            result_dict: dict = json.loads(cached)
+            # Return with the *current* job_id so the caller can correlate.
+            result_dict["job_id"] = job_id
+            return result_dict
+    except Exception:  # noqa: BLE001
+        log.warning("Cache lookup failed for job %s; proceeding without cache.", job_id, exc_info=True)
 
     with tempfile.TemporaryDirectory(prefix="flux_") as tmpdir:
         zcos_path = str(Path(tmpdir) / "model.zcos")
@@ -260,10 +302,19 @@ def run_simulation(self, job_id: str, zcos_bytes_hex: str) -> dict:  # type: ign
             ).model_dump()
 
         elapsed_ms = time.monotonic() * 1000 - start_ms
-        return SimulationResult(
+        result = SimulationResult(
             job_id=job_id,
             status="success",
             time=time_col,
             signals=channels,
             execution_time_ms=round(elapsed_ms, 2),
-        ).model_dump()
+        )
+
+        # ── Cache store ───────────────────────────────────────────────────
+        try:
+            _get_sim_cache().setex(key, _CACHE_TTL_S, result.model_dump_json())
+            log.debug("Cached result for job %s (key=%s…).", job_id, key[:16])
+        except Exception:  # noqa: BLE001
+            log.warning("Failed to cache result for job %s.", job_id, exc_info=True)
+
+        return result.model_dump()
