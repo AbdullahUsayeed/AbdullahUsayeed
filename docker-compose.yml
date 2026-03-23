@@ -1,0 +1,112 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Project Flux — Docker Compose
+# ─────────────────────────────────────────────────────────────────────────────
+# Services
+# ─────────────────────────────────────────────────────────────────────────────
+#   backend      FastAPI + Uvicorn (4 workers)
+#   worker       Celery workers (Warm Pool of Scilab instances)
+#   frontend     React app served via Nginx (proxies /api & /ws to backend)
+#   redis        Celery broker + result backend
+#
+# Concurrency
+# ─────────────────────────────────────────────────────────────────────────────
+# Each Celery worker process keeps ONE warm Scilab instance.
+# Scale workers horizontally to increase simulation throughput:
+#
+#   docker compose up --scale worker=N
+#
+# With N=10 workers on a medium-tier server you comfortably reach 50
+# concurrent simulations (each Scilab instance is lightweight headlessly).
+# ─────────────────────────────────────────────────────────────────────────────
+
+version: "3.9"
+
+x-backend-env: &backend-env
+  REDIS_URL: redis://redis:6379/0
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+  LLM_MODEL: ${LLM_MODEL:-gpt-4.1}
+  LLM_TEMPERATURE: ${LLM_TEMPERATURE:-0.2}
+  SCILAB_CMD: scilab-cli
+  SCILAB_TIMEOUT_S: "60"
+  ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-*}
+
+services:
+  # ── Redis (broker + result backend) ───────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - flux-net
+
+  # ── FastAPI Backend ────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    restart: unless-stopped
+    environment:
+      <<: *backend-env
+    ports:
+      - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - flux-net
+
+  # ── Celery Workers (Warm Pool) ─────────────────────────────────────────────
+  # Default: 4 workers = 4 warm Scilab instances.
+  # Scale up: docker compose up --scale worker=10
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    restart: unless-stopped
+    command:
+      - celery
+      - -A
+      - backend.worker.celery_app
+      - worker
+      - --loglevel=info
+      - --concurrency=1        # one Scilab process per OS process
+      - --queues=celery
+    environment:
+      <<: *backend-env
+    depends_on:
+      redis:
+        condition: service_healthy
+    deploy:
+      replicas: 4
+    networks:
+      - flux-net
+
+  # ── React Frontend ─────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - flux-net
+
+networks:
+  flux-net:
+    driver: bridge
