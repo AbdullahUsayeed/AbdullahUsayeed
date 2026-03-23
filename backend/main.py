@@ -122,6 +122,16 @@ class JobResponse(BaseModel):
     message: Optional[str] = None
 
 
+class DiagnoseRequest(BaseModel):
+    model: SimulationModel
+    error: str
+
+
+class DiagnoseResponse(BaseModel):
+    diagnosis: str
+    suggestion: str
+
+
 # ---------------------------------------------------------------------------
 # Helper: semantic IR hash
 # ---------------------------------------------------------------------------
@@ -145,6 +155,64 @@ def _ir_hash(model: SimulationModel) -> str:
     )
     payload = json.dumps(canonical, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode()).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# Helper: model diff logging (used by the refine route)
+# ---------------------------------------------------------------------------
+
+
+def _log_model_diff(old: SimulationModel, new: SimulationModel) -> None:
+    """
+    Emit a structured INFO log summarising what changed between two models.
+
+    Compared dimensions:
+      • Blocks added / removed (identified by id)
+      • Parameter values that changed on retained blocks
+      • Connection count delta
+    """
+    old_map = {b.id: b for b in old.blocks}
+    new_map = {b.id: b for b in new.blocks}
+
+    added = [
+        f"{b.type.value}({b.id[:8]}…)"
+        for b in new.blocks
+        if b.id not in old_map
+    ]
+    removed = [
+        f"{b.type.value}({b.id[:8]}…)"
+        for b in old.blocks
+        if b.id not in new_map
+    ]
+
+    param_changes: list[str] = []
+    for b in new.blocks:
+        if b.id in old_map:
+            old_b = old_map[b.id]
+            for k, v in b.parameters.items():
+                old_v = old_b.parameters.get(k)
+                if old_v is not None and old_v != v:
+                    param_changes.append(
+                        f"{b.type.value}.{k}: {old_v:.4g} → {v:.4g}"
+                    )
+
+    conn_old = {
+        (c.source_block, c.source_port, c.target_block, c.target_port)
+        for c in old.connections
+    }
+    conn_new = {
+        (c.source_block, c.source_port, c.target_block, c.target_port)
+        for c in new.connections
+    }
+
+    log.info(
+        "Refine diff — blocks: +[%s] -[%s]; params: [%s]; connections: +%d -%d",
+        ", ".join(added) if added else "none",
+        ", ".join(removed) if removed else "none",
+        ", ".join(param_changes) if param_changes else "none",
+        len(conn_new - conn_old),
+        len(conn_old - conn_new),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -237,6 +305,7 @@ async def simulate(req: GenerateRequest) -> JobResponse:
 async def refine(req: RefineRequest) -> JobResponse:
     """
     Modify an existing model via a natural-language instruction and re-run.
+    Logs a structured diff so developers can see exactly what the AI changed.
     """
     architect = get_architect()
     try:
@@ -244,8 +313,23 @@ async def refine(req: RefineRequest) -> JobResponse:
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    _log_model_diff(req.model, updated_model)
     job_id = _enqueue(updated_model)
     return JobResponse(job_id=job_id, status="queued")
+
+
+@app.post("/simulate/diagnose", response_model=DiagnoseResponse)
+async def diagnose_simulation(req: DiagnoseRequest) -> DiagnoseResponse:
+    """
+    Ask the AI to diagnose a simulation error and suggest a specific fix.
+
+    Accepts the model that failed and the error message shown to the user.
+    Returns a plain-English ``diagnosis`` and an actionable ``suggestion``.
+    Falls back gracefully if the LLM is unavailable.
+    """
+    architect = get_architect()
+    result = architect.diagnose(req.model, req.error)
+    return DiagnoseResponse(**result)
 
 
 @app.post("/simulate/update", response_model=JobResponse)

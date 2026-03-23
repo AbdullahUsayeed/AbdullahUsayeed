@@ -45,6 +45,7 @@ from typing import Any, Dict, Optional
 from pydantic import ValidationError
 
 from backend.block_registry import BLOCK_REGISTRY
+from backend.model_fixer import ModelAutoFixer
 from backend.models import AIMetadata, SimulationModel
 
 log = logging.getLogger(__name__)
@@ -220,6 +221,10 @@ class SimulationArchitect:
         """
         Generate a new SimulationModel from a free-form user prompt.
 
+        The raw LLM output passes through Pydantic validation and then the
+        ``ModelAutoFixer`` before being returned, so callers always receive
+        a model that is as structurally sound as possible.
+
         Parameters
         ----------
         prompt : str
@@ -229,7 +234,7 @@ class SimulationArchitect:
         Returns
         -------
         SimulationModel
-            Validated Pydantic model ready for the ZCOS compiler.
+            Validated and auto-fixed Pydantic model ready for the ZCOS compiler.
 
         Raises
         ------
@@ -281,6 +286,71 @@ class SimulationArchitect:
         ]
         return self._invoke(messages=messages, raw_prompt=instruction)
 
+    def diagnose(self, model: SimulationModel, error: str) -> Dict[str, str]:
+        """
+        Ask the AI to explain why a simulation failed and suggest a specific fix.
+
+        The response is always a ``dict`` with two string keys so callers never
+        have to guard against missing keys.  If the LLM call itself fails, a
+        static fallback message is returned — the method never raises.
+
+        Parameters
+        ----------
+        model : SimulationModel
+            The model that produced the error (used as context for the LLM).
+        error : str
+            The user-visible error message from the graph compiler or Scilab.
+
+        Returns
+        -------
+        dict with keys "diagnosis" (root-cause explanation) and
+        "suggestion" (actionable fix instruction).
+        """
+        model_json = model.model_dump_json(indent=2)
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a control-systems expert helping debug a simulation. "
+                    "Given the model JSON and the error message below, explain the "
+                    "root cause in plain English (1–3 sentences) and give one "
+                    "specific, actionable suggestion to fix it. "
+                    'Respond ONLY with valid JSON: {"diagnosis": "...", "suggestion": "..."}'
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Model:\n```json\n{model_json}\n```\n\n"
+                    f"Error: {error}"
+                ),
+            },
+        ]
+        try:
+            raw = self._call_llm(messages)
+            data = json.loads(raw)
+            return {
+                "diagnosis": str(
+                    data.get("diagnosis", "Unable to determine root cause.")
+                ),
+                "suggestion": str(
+                    data.get(
+                        "suggestion",
+                        "Try simplifying the model or checking block connections.",
+                    )
+                ),
+            }
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Diagnosis LLM call failed: %s", exc)
+            return {
+                "diagnosis": f"Validation failed: {error}",
+                "suggestion": (
+                    "Ensure all input ports are connected, "
+                    "at least one SCOPE block exists, "
+                    "and all block parameters are within valid ranges."
+                ),
+            }
+
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
@@ -296,6 +366,7 @@ class SimulationArchitect:
         last_error: Optional[Exception] = None
 
         for attempt in range(1, self._MAX_RETRIES + 1):
+            raw_json = ""  # initialised here so the except block can always reference it
             try:
                 raw_json = self._call_llm(messages)
                 data = json.loads(raw_json)
@@ -308,12 +379,27 @@ class SimulationArchitect:
                 data["metadata"]["raw_prompt"] = raw_prompt
 
                 model = SimulationModel.model_validate(data)
+
+                # ── Auto-fix layer ────────────────────────────────────────
+                # Deterministically repair common AI output mistakes
+                # (wrong param names, missing params, absent SCOPE, etc.)
+                # before the model ever reaches the graph compiler.
+                model, fixes = ModelAutoFixer().fix(model)
+                if fixes:
+                    log.info(
+                        "Auto-fixer applied %d correction(s) on attempt %d: %s",
+                        len(fixes),
+                        attempt,
+                        fixes,
+                    )
+
                 log.info(
-                    "SimulationModel generated: %d blocks, %d connections (attempt %d).",
+                    "SimulationModel validated: %d blocks, %d connections (attempt %d).",
                     len(model.blocks),
                     len(model.connections),
                     attempt,
                 )
+                log.debug("Generated IR JSON: %s", model.model_dump_json())
                 return model
 
             except (json.JSONDecodeError, ValidationError, KeyError) as exc:
@@ -329,7 +415,7 @@ class SimulationArchitect:
                     messages = messages + [
                         {
                             "role": "assistant",
-                            "content": raw_json if "raw_json" in dir() else "",
+                            "content": raw_json,
                         },
                         {
                             "role": "user",

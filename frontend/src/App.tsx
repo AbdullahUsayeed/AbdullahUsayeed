@@ -2,7 +2,7 @@
 // Project Flux — App (Root Component)
 // ---------------------------------------------------------------------------
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
 import { ErrorBanner } from "./components/ErrorBanner";
 import { NodeCanvas } from "./components/NodeCanvas";
@@ -11,11 +11,16 @@ import { PromptBar } from "./components/PromptBar";
 import { SimulationGraph } from "./components/SimulationGraph";
 import { useSimulation } from "./hooks/useSimulation";
 import { useFluxStore } from "./store";
-import { getBlockRegistry } from "./api/client";
+import { getBlockRegistry, diagnoseSimulation } from "./api/client";
+import type { DiagnoseResponse } from "./api/client";
 
 export default function App() {
   const store = useFluxStore();
   const { generate, refine, updateParam } = useSimulation();
+
+  // ── Diagnosis state (local — no need to persist to global store) ──
+  const [diagnosis, setDiagnosis] = useState<DiagnoseResponse | null>(null);
+  const [isDiagnosing, setIsDiagnosing] = useState(false);
 
   // Load Block Registry once on startup
   useEffect(() => {
@@ -26,6 +31,28 @@ export default function App() {
 
   const isLoading =
     store.status === "generating" || store.status === "running";
+
+  const handleDiagnose = async () => {
+    if (!store.model || !store.errorMessage) return;
+    setIsDiagnosing(true);
+    setDiagnosis(null);
+    try {
+      const result = await diagnoseSimulation(store.model, store.errorMessage);
+      setDiagnosis(result);
+    } catch {
+      setDiagnosis({
+        diagnosis: "Diagnosis service unavailable.",
+        suggestion: "Check that all input ports are connected and a SCOPE block exists.",
+      });
+    } finally {
+      setIsDiagnosing(false);
+    }
+  };
+
+  const handleDismissError = () => {
+    store.setErrorMessage(null);
+    setDiagnosis(null);
+  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
@@ -79,11 +106,14 @@ export default function App() {
         isLoading={isLoading}
       />
 
-      {/* Error banner */}
+      {/* Error banner — shows "Why did this fail?" when a model is present */}
       {store.errorMessage && (
         <ErrorBanner
           message={store.errorMessage}
-          onDismiss={() => store.setErrorMessage(null)}
+          onDismiss={handleDismissError}
+          onDiagnose={store.model ? handleDiagnose : undefined}
+          isDiagnosing={isDiagnosing}
+          diagnosis={diagnosis}
         />
       )}
 

@@ -78,6 +78,26 @@ export async function getBlockRegistry(): Promise<BlockRegistry> {
   return get<BlockRegistry>("/blocks");
 }
 
+// ── AI diagnosis ──────────────────────────────────────────────────────────────
+
+export interface DiagnoseResponse {
+  diagnosis: string;
+  suggestion: string;
+}
+
+/**
+ * Ask the AI to explain a simulation error and suggest a specific fix.
+ *
+ * @param model  The model that failed (passed as context to the LLM).
+ * @param error  The error message shown to the user.
+ */
+export async function diagnoseSimulation(
+  model: SimulationModel,
+  error: string
+): Promise<DiagnoseResponse> {
+  return post<DiagnoseResponse>("/simulate/diagnose", { model, error });
+}
+
 // ── WebSocket ────────────────────────────────────────────────────────────────
 
 /**
