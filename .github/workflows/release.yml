@@ -1,0 +1,105 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# System Link — Release Workflow
+# ─────────────────────────────────────────────────────────────────────────────
+# Triggered by: pushing a version tag (e.g.  git tag v1.0.0 && git push --tags)
+#
+# What it does:
+#   1. Checks out the repo
+#   2. Reads the version from the VERSION file
+#   3. Packages only the files a self-hoster needs into a zip archive:
+#        system-link-v<VERSION>.zip
+#   4. Creates a GitHub Release (with release notes from CHANGELOG.md)
+#      and uploads the zip as a release asset.
+#
+# The resulting asset appears on the GitHub Releases page and can be
+# downloaded by anyone with access to the repository.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write   # needed to create GitHub Releases and upload assets
+
+jobs:
+  release:
+    name: Build & Publish Release
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ── 2. Read version ───────────────────────────────────────────────────────
+      - name: Read version
+        id: version
+        run: |
+          VERSION=$(cat VERSION | tr -d '[:space:]')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          echo "archive=system-link-v${VERSION}.zip" >> "$GITHUB_OUTPUT"
+
+      # ── 3. Build release archive ─────────────────────────────────────────────
+      # Include only what a self-hoster needs; exclude dev/CI artefacts.
+      - name: Create release archive
+        run: |
+          ARCHIVE="${{ steps.version.outputs.archive }}"
+          ZIP_ROOT="system-link-v${{ steps.version.outputs.version }}"
+
+          # Assemble in a clean temp directory so the zip root is clean
+          mkdir -p "/tmp/${ZIP_ROOT}"
+          cp -r \
+            backend \
+            docker \
+            frontend \
+            docker-compose.yml \
+            .env.example \
+            install.sh \
+            install.bat \
+            VERSION \
+            CHANGELOG.md \
+            README.md \
+            "/tmp/${ZIP_ROOT}/"
+
+          # Remove Python cache artefacts
+          find "/tmp/${ZIP_ROOT}" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+          find "/tmp/${ZIP_ROOT}" -name "*.pyc" -delete 2>/dev/null || true
+
+          # Remove node_modules if present (shouldn't be, but be safe)
+          find "/tmp/${ZIP_ROOT}" -type d -name node_modules -exec rm -rf {} + 2>/dev/null || true
+
+          (cd /tmp && zip -r "${GITHUB_WORKSPACE}/${ARCHIVE}" "${ZIP_ROOT}/")
+
+          echo "Created ${ARCHIVE} ($(du -sh "${GITHUB_WORKSPACE}/${ARCHIVE}" | cut -f1))"
+
+      # ── 4. Extract release notes from CHANGELOG.md ───────────────────────────
+      # Pulls out the block for the current version tag between the first two
+      # level-2 headings so the GitHub release body is populated automatically.
+      - name: Extract release notes
+        id: notes
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          NOTES=$(awk "/^## \[${VERSION}\]/,/^## \[/" CHANGELOG.md \
+                  | head -n -1 \
+                  | tail -n +2)
+          # Write to a file so we don't hit env-var size limits
+          echo "$NOTES" > /tmp/release-notes.md
+          echo "notes_file=/tmp/release-notes.md" >> "$GITHUB_OUTPUT"
+
+      # ── 5. Create GitHub Release ─────────────────────────────────────────────
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "System Link v${{ steps.version.outputs.version }}"
+          tag_name: "${{ steps.version.outputs.tag }}"
+          body_path: "${{ steps.notes.outputs.notes_file }}"
+          draft: false
+          prerelease: false
+          files: "${{ steps.version.outputs.archive }}"

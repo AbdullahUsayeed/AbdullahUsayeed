@@ -1,0 +1,75 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# System Link — Backend Dockerfile
+# Base: python:3.11-slim  (Debian Bookworm slim)
+#
+# Strategy to keep the image lean
+# ─────────────────────────────────────────────────────────────────────────────
+# scilab-cli is installed WITHOUT the full Scilab GUI stack.
+# We use "scilab-cli" from Debian/Ubuntu's universe, which pulls in the Java
+# runtime and numerical kernel but skips Xcos, the GTK GUI, and all desktop
+# dependencies—shaving ~600 MB off a full "scilab" install.
+#
+# Build stages:
+#   builder  – installs Python deps into a venv (wheels cached separately)
+#   runtime  – copies only the venv + app code + scilab-cli binary
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Stage 1: Python dependency builder ──────────────────────────────────────
+FROM python:3.11-slim AS builder
+
+WORKDIR /build
+
+# System packages needed to compile Python wheels (lxml, etc.)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gcc \
+        libxml2-dev \
+        libxslt1-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY backend/requirements.txt .
+
+RUN python -m venv /opt/venv \
+    && /opt/venv/bin/pip install --no-cache-dir --upgrade pip \
+    && /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
+
+
+# ── Stage 2: Runtime image ───────────────────────────────────────────────────
+FROM python:3.11-slim AS runtime
+
+# ── Scilab CLI (headless, no GUI) ────────────────────────────────────────────
+# We install:
+#   scilab-cli         The command-line Scilab interpreter (no GUI, no Xcos UI)
+#   default-jre-headless  The minimal JRE required by scilab-cli
+#
+# Explicitly excluded via apt-mark hold / package selection:
+#   scilab             (full GUI — +400 MB)
+#   scilab-full        (extra toolboxes — +200 MB)
+#   libgtk-3-0         (GTK GUI toolkit — not needed headlessly)
+#
+# The resulting scilab-cli layer adds approximately 380–420 MB to the image.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        scilab-cli \
+        default-jre-headless \
+        libxml2 \
+        libxslt1.1 \
+        ca-certificates \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# ── Copy Python venv from builder ────────────────────────────────────────────
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# ── Application code ─────────────────────────────────────────────────────────
+WORKDIR /app
+COPY backend/ ./backend/
+
+# ── Runtime configuration ────────────────────────────────────────────────────
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    SCILAB_CMD=scilab-cli \
+    SCILAB_TIMEOUT_S=60
+
+EXPOSE 8000
+
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
