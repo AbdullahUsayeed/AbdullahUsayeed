@@ -102,6 +102,19 @@ I am particularly interested in working on **advanced embedded platforms, intell
 
 **Proudly built by [Usayeed](https://usayeed.com)**
 
+[![Latest Release](https://img.shields.io/github/v/release/AbdullahUsayeed/AbdullahUsayeed?label=Download&logo=github&style=for-the-badge)](https://github.com/AbdullahUsayeed/AbdullahUsayeed/releases/latest)
+
+### 📥 Download
+
+The easiest way to get System Link is to **download the latest release archive**:
+
+1. Click the **Download** badge above (or visit the [Releases page](https://github.com/AbdullahUsayeed/AbdullahUsayeed/releases/latest))
+2. Download `system-link-v<version>.zip`
+3. Extract the zip
+4. Follow the **Quick-Start** instructions inside — run `./install.sh` (Linux/macOS) or double-click `install.bat` (Windows)
+
+No git, no build tools — just Docker Desktop and the zip.
+
 System Link is a premium simulation platform that makes professional-grade control systems simulation accessible to everyone — no $2,000 licence, no 40-hour learning curve.
 
 ### Pricing

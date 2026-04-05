@@ -103,6 +103,19 @@ export default function App() {
         <span style={{ fontWeight: 700, fontSize: 15, color: "#e2e8f0" }}>
           System Link
         </span>
+        <span
+          style={{
+            fontSize: 10,
+            color: "#334155",
+            background: "#1e293b",
+            border: "1px solid #2d3148",
+            borderRadius: 4,
+            padding: "1px 6px",
+            fontFamily: "monospace",
+          }}
+        >
+          v1.0.0
+        </span>
         <span style={{ fontSize: 11, color: "#475569" }}>
           AI-Native Control Systems Simulation
         </span>

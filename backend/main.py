@@ -313,7 +313,7 @@ def _enqueue(model: SimulationModel, queue: str = "flux_high") -> str:
 
 @app.get("/health")
 async def health() -> Dict[str, str]:
-    return {"status": "ok", "service": "system-link-api"}
+    return {"status": "ok", "service": "system-link-api", "version": "1.0.0"}
 
 
 @app.get("/blocks")
