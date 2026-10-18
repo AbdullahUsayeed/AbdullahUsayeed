@@ -1,6 +1,5 @@
 Someone who is genuinely interested in solving problems and creating his own reality to shape the world. 
 
-Started a Company: Usayeed.com 
 
 
 Made UCAD a cad interface for freecad. failed to market it. 
